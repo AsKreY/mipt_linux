@@ -1,6 +1,5 @@
-*
-
-!.gitignore
-!*.c
-!*.md
-!*.patch
+*.cmd
+*.ko
+*.mod*
+*.o
+*odule*
