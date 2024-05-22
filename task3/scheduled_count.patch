@@ -1,0 +1,87 @@
+diff --git a/linux-6.7.4/fs/proc/base.c b/linux-6.7.4/fs/proc/base.c
+index dd31e3b6b..d3cbe3698 100644
+--- a/linux-6.7.4/fs/proc/base.c
++++ b/linux-6.7.4/fs/proc/base.c
+@@ -488,6 +488,17 @@ static int proc_pid_schedstat(struct seq_file *m, struct pid_namespace *ns,
+ }
+ #endif
+ 
++static int proc_pid_sheduled_count(struct seq_file *m, struct pid_namespace *ns,
++			      struct pid *pid, struct task_struct *task)
++{
++	if (unlikely(!sched_info_on()))
++		seq_puts(m, " 0\n");
++	else
++		seq_printf(m, "%lld \n", atomic64_read(&(task->scheduled_count)));
++
++	return 0;
++}
++
+ #ifdef CONFIG_LATENCYTOP
+ static int lstats_show_proc(struct seq_file *m, void *v)
+ {
+@@ -3305,6 +3316,7 @@ static const struct pid_entry tgid_base_stuff[] = {
+ #ifdef CONFIG_SCHED_INFO
+ 	ONE("schedstat",  S_IRUGO, proc_pid_schedstat),
+ #endif
++ONE("scheduled_count", S_IRUGO, proc_pid_sheduled_count),
+ #ifdef CONFIG_LATENCYTOP
+ 	REG("latency",  S_IRUGO, proc_lstats_operations),
+ #endif
+@@ -3654,6 +3666,7 @@ static const struct pid_entry tid_base_stuff[] = {
+ #ifdef CONFIG_SCHED_INFO
+ 	ONE("schedstat", S_IRUGO, proc_pid_schedstat),
+ #endif
++ONE("scheduled_count", S_IRUGO, proc_pid_sheduled_count),
+ #ifdef CONFIG_LATENCYTOP
+ 	REG("latency",  S_IRUGO, proc_lstats_operations),
+ #endif
+diff --git a/linux-6.7.4/include/linux/sched.h b/linux-6.7.4/include/linux/sched.h
+index 292c31697..4d41827ab 100644
+--- a/linux-6.7.4/include/linux/sched.h
++++ b/linux-6.7.4/include/linux/sched.h
+@@ -751,6 +751,7 @@ struct task_struct {
+ 	 */
+ 	struct thread_info		thread_info;
+ #endif
++	atomic64_t scheduled_count;
+ 	unsigned int			__state;
+ 
+ 	/* saved state for "spinlock sleepers" */
+diff --git a/linux-6.7.4/kernel/fork.c b/linux-6.7.4/kernel/fork.c
+index 10917c3e1..c6f1153e6 100644
+--- a/linux-6.7.4/kernel/fork.c
++++ b/linux-6.7.4/kernel/fork.c
+@@ -1971,6 +1971,7 @@ init_task_pid(struct task_struct *task, enum pid_type type, struct pid *pid)
+ 
+ static inline void rcu_copy_process(struct task_struct *p)
+ {
++	atomic64_set(&(p->scheduled_count), 0);
+ #ifdef CONFIG_PREEMPT_RCU
+ 	p->rcu_read_lock_nesting = 0;
+ 	p->rcu_read_unlock_special.s = 0;
+diff --git a/linux-6.7.4/kernel/sched/core.c b/linux-6.7.4/kernel/sched/core.c
+index a708d225c..02f85c6b9 100644
+--- a/linux-6.7.4/kernel/sched/core.c
++++ b/linux-6.7.4/kernel/sched/core.c
+@@ -6003,7 +6003,7 @@ __pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
+ 			put_prev_task(rq, prev);
+ 			p = pick_next_task_idle(rq);
+ 		}
+-
++		atomic64_inc(&p->scheduled_count);
+ 		return p;
+ 	}
+ 
+@@ -6012,8 +6012,10 @@ __pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
+ 
+ 	for_each_class(class) {
+ 		p = class->pick_next_task(rq);
+-		if (p)
++		if (p) {
++			atomic64_add(1, &p->scheduled_count);
+ 			return p;
++		}
+ 	}
+ 
+ 	BUG(); /* The idle class should always have a runnable task. */
